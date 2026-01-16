@@ -32,13 +32,18 @@ export class OwnerGoal {
   private colliders: any[] = []
   private ownerRoot: Group | null = null
   private ownerMixer: AnimationMixer | null = null
+  private ownerBaseOffsetY = 0
+  private yardFallback: Group | null = null
+  private houseRoot: Group | null = null
+  private fenceRoot: Group | null = null
 
   constructor(
     private readonly terrain: Terrain,
     private readonly physics: Physics,
   ) {
-    this.build()
+    this.buildFallbackYard()
     void this.loadOwnerModel()
+    void this.loadYardModels()
     this.reset()
   }
 
@@ -75,7 +80,16 @@ export class OwnerGoal {
 
       if (this.ownerRoot) {
         this.ownerRoot.position.copy(this.humanOffset)
-        this.ownerRoot.position.y = this.ownerPosition.y - this.group.position.y
+        this.ownerRoot.position.y = this.ownerPosition.y - this.group.position.y + this.ownerBaseOffsetY
+      }
+
+      if (this.houseRoot) {
+        this.houseRoot.position.copy(this.houseOffset)
+      }
+
+      if (this.fenceRoot) {
+        this.fenceRoot.position.set(0, 0, 0)
+        this.updateFenceToTerrain()
       }
 
       placed = true
@@ -93,7 +107,7 @@ export class OwnerGoal {
     return this.group.position.clone()
   }
 
-  private build() {
+  private buildFallbackYard() {
     const fenceMat = new MeshStandardMaterial({ color: 0x7c5a34, roughness: 0.9 })
     const fencePostGeo = new BoxGeometry(0.3, 1.3, 0.3)
     const fenceRailGeo = new BoxGeometry(this.yardSize, 0.22, 0.18)
@@ -171,7 +185,8 @@ export class OwnerGoal {
     porch.position.set(this.houseOffset.x, 0.35, this.houseOffset.z + 3.2)
     porch.receiveShadow = true
 
-    this.group.add(
+    this.yardFallback = new Group()
+    this.yardFallback.add(
       fenceGroup,
       houseBase,
       roof,
@@ -181,6 +196,8 @@ export class OwnerGoal {
       windowRight,
       porch,
     )
+
+    this.group.add(this.yardFallback)
 
     this.colliderDefs.push(
       {
@@ -247,8 +264,10 @@ export class OwnerGoal {
       }
 
       const boxAfter = new Box3().setFromObject(root)
-      root.position.y += -boxAfter.min.y
+      const baseOffset = -boxAfter.min.y
+      root.position.y += baseOffset
 
+      this.ownerBaseOffsetY = baseOffset
       this.ownerRoot = root
       this.ownerMixer = gltf.animations.length ? new AnimationMixer(root) : null
       if (this.ownerMixer && gltf.animations[0]) {
@@ -258,6 +277,120 @@ export class OwnerGoal {
       this.group.add(root)
     } catch (error) {
       console.warn('Owner model load failed', error)
+    }
+  }
+
+  private async loadYardModels() {
+    try {
+      const loader = new GLTFLoader()
+      const [houseGltf, fenceGltf] = await Promise.all([
+        loader.loadAsync(`${import.meta.env.BASE_URL}assets/yard/House.glb`),
+        loader.loadAsync(`${import.meta.env.BASE_URL}assets/yard/Fence.glb`),
+      ])
+
+      const house = houseGltf.scene
+      const fence = fenceGltf.scene
+
+      this.prepareYardModel(house)
+      this.prepareYardModel(fence)
+
+      const houseBounds = this.groundModel(house)
+      const fenceBounds = new Box3().setFromObject(fence)
+
+      const houseScale = this.scaleModelToWidth(houseBounds, 6.2)
+      house.scale.setScalar(houseScale)
+      this.groundModel(house)
+
+      const fenceGroup = this.buildFencePerimeter(fence, fenceBounds)
+
+      house.position.copy(this.houseOffset)
+
+      this.houseRoot = house
+      this.fenceRoot = fenceGroup
+
+      if (this.yardFallback) {
+        this.yardFallback.visible = false
+      }
+
+      this.group.add(fenceGroup, house)
+      this.updateFenceToTerrain()
+      this.rebuildColliders()
+    } catch (error) {
+      console.warn('Yard model load failed', error)
+    }
+  }
+
+  private prepareYardModel(root: Group) {
+    root.traverse((obj) => {
+      const mesh = obj as any
+      if (mesh.isMesh) {
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+      }
+    })
+  }
+
+  private groundModel(root: Group) {
+    const bounds = new Box3().setFromObject(root)
+    root.position.y += -bounds.min.y
+    return bounds
+  }
+
+  private scaleModelToWidth(bounds: Box3, targetWidth: number) {
+    const size = bounds.getSize(new Vector3())
+    const width = Math.max(size.x, size.z)
+    if (width > 0.0001) {
+      const scale = targetWidth / width
+      return scale
+    }
+    return 1
+  }
+
+  private buildFencePerimeter(fenceRoot: Group, bounds: Box3) {
+    const fenceGroup = new Group()
+    const fenceScale = this.scaleModelToWidth(bounds, this.yardSize)
+
+    const openingFraction = 0.28
+    const gapStart = this.yardSize * 0.5 - this.yardSize * openingFraction
+
+    const createFenceSection = (position: Vector3, yaw: number) => {
+      const section = fenceRoot.clone(true)
+      section.scale.setScalar(fenceScale)
+      section.position.copy(position)
+      section.rotation.y = yaw
+      this.prepareYardModel(section)
+      this.groundModel(section)
+      fenceGroup.add(section)
+    }
+
+    // North side (leave opening on the east end).
+    if (gapStart > -this.yardSize * 0.5) {
+      createFenceSection(new Vector3((gapStart - this.yardSize * 0.5) * 0.5, 0, this.yardSize / 2), 0)
+    }
+
+    // South side.
+    createFenceSection(new Vector3(0, 0, -this.yardSize / 2), 0)
+
+    // West side.
+    createFenceSection(new Vector3(-this.yardSize / 2, 0, 0), Math.PI / 2)
+
+    // East side (leave opening on the north end).
+    if (gapStart > -this.yardSize * 0.5) {
+      createFenceSection(new Vector3(this.yardSize / 2, 0, (gapStart - this.yardSize * 0.5) * 0.5), Math.PI / 2)
+    }
+
+    return fenceGroup
+  }
+
+  private updateFenceToTerrain() {
+    if (!this.fenceRoot) return
+
+    for (const child of this.fenceRoot.children) {
+      const section = child as Group
+      const worldPos = new Vector3()
+      section.getWorldPosition(worldPos)
+      const groundY = this.terrain.getHeightAt(worldPos.x, worldPos.z)
+      section.position.y = groundY - this.group.position.y
     }
   }
 
