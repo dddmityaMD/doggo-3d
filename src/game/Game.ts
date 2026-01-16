@@ -219,12 +219,14 @@ export class Game {
     this.setStatus('Загрузка собаки (Mixamo glb)…')
 
     try {
-      const dog = await loadDogSet('/assets/dog/Idle.glb', {
-        idle: '/assets/dog/Idle.glb',
-        run: '/assets/dog/Run.glb',
-        walk: '/assets/dog/Walk.glb',
-        jump: '/assets/dog/Jump.glb',
-        gallopJump: '/assets/dog/GallopJump.glb',
+      const asset = (name: string) => `${import.meta.env.BASE_URL}assets/dog/${name}`
+
+      const dog = await loadDogSet(asset('Idle.glb'), {
+        idle: asset('Idle.glb'),
+        run: asset('Run.glb'),
+        walk: asset('Walk.glb'),
+        jump: asset('Jump.glb'),
+        gallopJump: asset('GallopJump.glb'),
       })
       this.player.setModel(dog.root, dog.clips)
       this.setStatus('')
