@@ -33,8 +33,18 @@ export class Player {
 
   private jumpAnimTime = 0
   private jumpWasRunning = false
+  private celebrating = false
+  private celebrationTime = 0
+  private celebrationHopTimer = 0
+  private celebrationDuration = 0
 
   private readonly cfg: PlayerConfig
+
+  dispose() {
+    const { world } = this.physics
+    world.removeCollider(this.collider, true)
+    world.removeRigidBody(this.body)
+  }
 
   constructor(
     private readonly physics: Physics,
@@ -45,8 +55,8 @@ export class Player {
       spawn: new Vector3(0, 20, 0),
       radius: 0.45,
       halfHeight: 0.55,
-      maxSpeed: 8.5,
-      acceleration: 36,
+      maxSpeed: 12.75,
+      acceleration: 45,
       jumpSpeed: 7.2,
       maxSlopeClimbRadians: (40 * Math.PI) / 180,
       slideSlopeRadians: (48 * Math.PI) / 180,
@@ -104,6 +114,16 @@ export class Player {
       if (mesh.isMesh) {
         mesh.castShadow = true
         mesh.receiveShadow = true
+
+        if (mesh.geometry?.isBufferGeometry) {
+          mesh.geometry.computeVertexNormals()
+        }
+
+        const material = mesh.material as any
+        if (material && material.flatShading) {
+          material.flatShading = false
+          material.needsUpdate = true
+        }
       }
     })
 
@@ -137,7 +157,7 @@ export class Player {
     root.position.y += offsetY
   }
 
-  applyInput(dt: number, cameraYaw: number) {
+  applyInput(dt: number, cameraYaw: number, allowMove = true) {
     const cfg = this.cfg
 
     const state = this.input.getState()
@@ -146,13 +166,13 @@ export class Player {
     this.updateGroundInfo(cfg)
 
     // Movement direction relative to camera yaw.
-    const move = new Vector3(state.right, 0, -state.forward)
+    const move = allowMove ? new Vector3(state.right, 0, -state.forward) : new Vector3(0, 0, 0)
     if (move.lengthSq() > 1e-6) move.normalize()
 
     const yaw = cameraYaw
     move.applyAxisAngle(new Vector3(0, 1, 0), yaw)
 
-    const targetSpeed = state.runHeld ? cfg.maxSpeed : cfg.maxSpeed * 0.55
+    const targetSpeed = state.runHeld ? cfg.maxSpeed * 0.55 : cfg.maxSpeed
     const desiredVel = new Vector3(move.x * targetSpeed, 0, move.z * targetSpeed)
 
     // Handle steep slopes: remove uphill component and add slide.
@@ -196,25 +216,34 @@ export class Player {
       vel.y = cfg.jumpSpeed
       this.grounded = false
       this.jumpAnimTime = 0.45
-      this.jumpWasRunning = state.runHeld
+      this.jumpWasRunning = !state.runHeld
+    } else if (this.celebrating && this.grounded && this.celebrationHopTimer <= 0) {
+      vel.y = cfg.jumpSpeed * 0.85
+      this.grounded = false
+      this.jumpAnimTime = 0.4
+      this.jumpWasRunning = false
+      const progress = this.celebrationDuration > 0
+        ? 1 - this.celebrationTime / this.celebrationDuration
+        : 1
+      this.celebrationHopTimer = 0.45 + progress * 0.35
     }
 
     this.body.setLinvel({ x: vel.x, y: vel.y, z: vel.z }, true)
     this.desiredVel.copy(desiredVel)
   }
 
-  sync(dt: number) {
+  sync(dt: number, allowRotate = true) {
     const t = this.body.translation()
     this.group.position.set(t.x, t.y, t.z)
 
     const moveSpeed = Math.sqrt(this.desiredVel.x * this.desiredVel.x + this.desiredVel.z * this.desiredVel.z)
-    if (moveSpeed > 0.2) {
+    if (allowRotate && moveSpeed > 0.2) {
       const targetYaw = Math.atan2(this.desiredVel.x, this.desiredVel.z)
       const targetQ = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), targetYaw)
       this.group.quaternion.slerp(targetQ, 1 - Math.exp(-12 * dt))
     }
 
-    const runActive = this.input.getState().runHeld
+    const runActive = !this.input.getState().runHeld
     this.updateAnimation(dt, moveSpeed, runActive)
 
     if (this.jumpAnimTime > 0) {
@@ -223,6 +252,14 @@ export class Player {
 
     if (this.jumpAnimTime === 0) {
       this.jumpWasRunning = false
+    }
+
+    if (this.celebrating) {
+      this.celebrationTime = Math.max(0, this.celebrationTime - dt)
+      this.celebrationHopTimer = Math.max(0, this.celebrationHopTimer - dt)
+      if (this.celebrationTime === 0) {
+        this.celebrating = false
+      }
     }
   }
 
@@ -247,6 +284,20 @@ export class Player {
     this.groundNormal.set(hit.normal.x, hit.normal.y, hit.normal.z).normalize()
   }
 
+  startCelebration(duration = 3.2) {
+    this.celebrating = true
+    this.celebrationTime = duration
+    this.celebrationDuration = duration
+    this.celebrationHopTimer = 0
+  }
+
+  stopCelebration() {
+    this.celebrating = false
+    this.celebrationTime = 0
+    this.celebrationHopTimer = 0
+    this.celebrationDuration = 0
+  }
+
   private updateAnimation(dt: number, speedXZ: number, runActive: boolean) {
     if (!this.mixer || !this.clips.idle) return
 
@@ -261,6 +312,10 @@ export class Player {
       next = runActive ? 'run' : 'walk'
     } else {
       next = 'idle'
+    }
+
+    if (this.celebrating && this.grounded) {
+      next = 'jump'
     }
 
 

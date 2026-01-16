@@ -1,4 +1,4 @@
-import { BufferAttribute, Mesh, MeshStandardMaterial, PlaneGeometry } from 'three'
+import { BufferAttribute, CanvasTexture, Mesh, MeshStandardMaterial, PlaneGeometry, RepeatWrapping, SRGBColorSpace } from 'three'
 import { createNoise2D } from 'simplex-noise'
 
 import type { Physics } from '../physics/Physics'
@@ -165,15 +165,56 @@ export class Terrain {
     geometry.computeVertexNormals()
 
     const material = new MeshStandardMaterial({
-      color: 0x2d6a32,
+      color: 0xffffff,
       roughness: 1.0,
       metalness: 0.0,
     })
+
+    const grassTexture = createGrassTexture()
+    material.map = grassTexture
 
     const mesh = new Mesh(geometry, material)
     mesh.receiveShadow = true
     return mesh
   }
+}
+
+function createGrassTexture() {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Unable to get canvas context')
+
+  ctx.fillStyle = '#2f6f3c'
+  ctx.fillRect(0, 0, size, size)
+
+  for (let i = 0; i < 12000; i++) {
+    const x = Math.random() * size
+    const y = Math.random() * size
+    const light = 80 + Math.random() * 60
+    ctx.fillStyle = `rgba(${30 + light * 0.25}, ${90 + light * 0.6}, ${40 + light * 0.2}, 0.6)`
+    ctx.fillRect(x, y, 1, 1)
+  }
+
+  for (let i = 0; i < 2200; i++) {
+    const x = Math.random() * size
+    const y = Math.random() * size
+    ctx.fillStyle = 'rgba(20, 60, 25, 0.5)'
+    ctx.fillRect(x, y, 2, 2)
+  }
+
+  const texture = new CanvasTexture(canvas)
+  texture.colorSpace = SRGBColorSpace
+  texture.wrapS = RepeatWrapping
+  texture.wrapT = RepeatWrapping
+  texture.repeat.set(64, 64)
+  texture.anisotropy = 8
+  texture.needsUpdate = true
+
+  return texture
 }
 
 function clampInt(value: number, min: number, max: number) {

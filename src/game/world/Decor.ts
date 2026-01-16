@@ -37,10 +37,10 @@ export class Decor {
   }
 
   private addTrees(cfg: DecorConfig) {
-    const trunkGeo = new CylinderGeometry(0.35, 0.5, 4.2, 6)
+    const trunkGeo = new CylinderGeometry(0.35, 0.5, 4.2, 12)
     const trunkMat = new MeshStandardMaterial({ color: 0x5a3b20, roughness: 1 })
 
-    const canopyGeo = new SphereGeometry(2.2, 8, 8)
+    const canopyGeo = new SphereGeometry(2.2, 16, 12)
     const canopyMat = new MeshStandardMaterial({ color: 0x1f6b2a, roughness: 1 })
 
     const trunks = new InstancedMesh(trunkGeo, trunkMat, cfg.treeCount)
@@ -99,8 +99,8 @@ export class Decor {
   }
 
   private addRocks(cfg: DecorConfig) {
-    const rockGeo = new SphereGeometry(1.6, 7, 7)
-    const rockMat = new MeshStandardMaterial({ color: new Color(0x777777), roughness: 1 })
+    const rockGeo = new SphereGeometry(1.6, 12, 10)
+    const rockMat = new MeshStandardMaterial({ color: new Color(0x707070), roughness: 0.9 })
 
     const rocks = new InstancedMesh(rockGeo, rockMat, cfg.rockCount)
     rocks.castShadow = true
@@ -132,8 +132,8 @@ export class Decor {
       dummy.updateMatrix()
       rocks.setMatrixAt(placed, dummy.matrix)
 
-      const colliderDesc = this.physics.RAPIER.ColliderDesc.ball(1.2 * s)
-      colliderDesc.setTranslation(x, y + 0.8 * s, z)
+      const colliderDesc = this.physics.RAPIER.ColliderDesc.ball(1.7 * s)
+      colliderDesc.setTranslation(x, y + 0.95 * s, z)
       colliderDesc.setFriction(1.0)
       this.physics.world.createCollider(colliderDesc)
 
