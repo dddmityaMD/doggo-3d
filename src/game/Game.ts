@@ -17,6 +17,7 @@ import { Physics } from './physics/Physics'
 import { Terrain } from './world/Terrain'
 import { Decor } from './world/Decor'
 import { OwnerGoal } from './world/OwnerGoal'
+import { Berries } from './world/Berries'
 import { OwnerArrow } from './ui/OwnerArrow'
 import { Player } from './player/Player'
 import { ThirdPersonCamera } from './camera/ThirdPersonCamera'
@@ -31,6 +32,7 @@ export type GameOptions = {
   confirmEl: HTMLElement
   confirmYes: HTMLButtonElement
   confirmNo: HTMLButtonElement
+  hungerEl: HTMLElement
 }
 
 export class Game {
@@ -41,6 +43,7 @@ export class Game {
   private readonly confirmEl: HTMLElement
   private readonly confirmYes: HTMLButtonElement
   private readonly confirmNo: HTMLButtonElement
+  private readonly hungerEl: HTMLElement
 
   private renderer!: WebGLRenderer
   private scene!: Scene
@@ -52,6 +55,7 @@ export class Game {
   private terrain!: Terrain
   private decor!: Decor
   private ownerGoal!: OwnerGoal
+  private berries!: Berries
 
   private player!: Player
   private cameraCtrl!: ThirdPersonCamera
@@ -61,6 +65,15 @@ export class Game {
   private uiArrow!: OwnerArrow
   private winAudio: HTMLAudioElement | null = null
   private bgAudio: HTMLAudioElement | null = null
+  private eatBerryAudio: HTMLAudioElement | null = null
+
+  // Hunger
+  private hunger = 100
+  private readonly hungerMax = 100
+  private readonly hungerBerryRestore = 10
+  private readonly hungerBaseDrainPerSecMoving = 0.35
+  private readonly hungerExtraDrainPerSecAtMaxSpeed = 0.9
+  private readonly hungerMinSpeedToDrain = 0.35
 
   private celebrating = false
   private celebrateTimer = 0
@@ -76,6 +89,7 @@ export class Game {
     this.confirmEl = opts.confirmEl
     this.confirmYes = opts.confirmYes
     this.confirmNo = opts.confirmNo
+    this.hungerEl = opts.hungerEl
   }
 
   async init() {
@@ -115,11 +129,20 @@ export class Game {
 
     this.addWorldWalls()
 
-    this.decor = new Decor(this.terrain, this.physics)
-    this.scene.add(this.decor.group)
-
     this.ownerGoal = new OwnerGoal(this.terrain, this.physics)
     this.scene.add(this.ownerGoal.group)
+
+    const denseTarget = this.ownerGoal.getYardPosition().clone().multiplyScalar(0.6)
+    this.decor = new Decor(this.terrain, this.physics, {
+      denseTarget,
+    })
+    this.scene.add(this.decor.group)
+    await this.decor.ready().catch(() => {})
+
+    this.berries = new Berries(this.terrain)
+    this.scene.add(this.berries.group)
+    await this.berries.ready()
+
 
     this.uiArrow = new OwnerArrow(this.root)
 
@@ -129,6 +152,9 @@ export class Game {
     this.bgAudio = new Audio(`${import.meta.env.BASE_URL}assets/sounds/background.mp3`)
     this.bgAudio.loop = true
     this.bgAudio.volume = 0.35
+
+    this.eatBerryAudio = new Audio(`${import.meta.env.BASE_URL}assets/sounds/eatBerry.mp3`)
+    this.eatBerryAudio.volume = 0.55
 
     const spawnY = this.terrain.getHeightAt(0, 0) + 6
     this.player = new Player(this.physics, this.input, {
@@ -155,6 +181,9 @@ export class Game {
     this.setStatus('Кликни по сцене (мышь), чтобы играть')
     this.setNotice('')
     this.setConfirm(false)
+
+    this.hunger = this.hungerMax
+    this.renderHunger()
   }
 
   start() {
@@ -171,19 +200,25 @@ export class Game {
   private tick = () => {
     if (!this.running) return
 
-    const dt = this.clock.getDelta()
-
-    const allowMove = !this.celebrating
-    this.player.applyInput(dt, this.cameraCtrl.yaw, allowMove)
-
-    this.physics.step(dt)
-
+     const dt = this.clock.getDelta()
+ 
+     const allowMove = !this.celebrating
+     this.player.applyInput(dt, this.cameraCtrl.yaw, allowMove)
+ 
+     this.physics.step(dt)
+ 
     this.player.sync(dt, allowMove)
     this.ownerGoal.update(dt)
+    this.berries.update(dt)
+
+    this.updateHunger(dt)
+    this.tryCollectBerries()
 
     this.cameraCtrl.update(dt, this.player.group.position)
 
-    this.renderer.render(this.scene, this.cameraCtrl.camera)
+ 
+     this.renderer.render(this.scene, this.cameraCtrl.camera)
+
 
     if (!this.celebrating) {
       this.checkOwnerFound()
@@ -367,17 +402,83 @@ export class Game {
     const headingFromNorth = Math.atan2(forward.x, -forward.z)
 
     const distance = ownerPos.distanceTo(playerPos)
-    this.uiArrow.update(ownerPos, playerPos, headingFromNorth, distance)
+
+    const hungerPct = (this.hunger / this.hungerMax) * 100
+    const showBerry = hungerPct < 30
+    const nearestBerry = showBerry ? this.berries.getNearestUncollected(playerPos) : null
+
+    this.uiArrow.update(ownerPos, playerPos, headingFromNorth, distance, nearestBerry, showBerry)
   }
 
+  private updateHunger(dt: number) {
+    if (this.celebrating || this.awaitingRestart) {
+      this.renderHunger()
+      return
+    }
 
-  private resetLevel() {
-    this.celebrating = false
-    this.awaitingRestart = false
-    this.player.stopCelebration()
-    this.setNotice('')
+    const speed = this.player.getHorizontalSpeed()
+    const maxSpeed = this.player.getConfiguredMaxSpeed()
 
+    const isMoving = speed >= this.hungerMinSpeedToDrain
+    const speed01 = maxSpeed > 0.001 ? Math.min(1, Math.max(0, speed / maxSpeed)) : 0
+
+    const drain = isMoving
+      ? this.hungerBaseDrainPerSecMoving + this.hungerExtraDrainPerSecAtMaxSpeed * speed01
+      : 0
+
+    this.hunger = Math.max(0, this.hunger - drain * dt)
+
+    const starving = this.hunger <= 0.0001
+    this.player.setStarving(starving)
+
+    if (starving) {
+      this.setStatus('Собачка очень голодная… найди ягоды!')
+    } else if (this.statusEl.textContent === 'Собачка очень голодная… найди ягоды!') {
+      this.setStatus('')
+    }
+
+    this.renderHunger()
+  }
+
+  private tryCollectBerries() {
+    if (this.celebrating || this.awaitingRestart) return
+
+    const collected = this.berries.collectNear(this.player.group.position, 1.8)
+    if (collected <= 0) return
+
+    this.hunger = Math.min(this.hungerMax, this.hunger + collected * this.hungerBerryRestore)
+    this.renderHunger()
+
+    this.playEatBerrySound()
+  }
+
+  private renderHunger() {
+    const pct = Math.round((this.hunger / this.hungerMax) * 100)
+    this.hungerEl.textContent = `${pct}%`
+
+    const critical = pct <= 15
+    this.hungerEl.classList.toggle('critical', critical)
+  }
+
+ 
+   private resetLevel() {
+     this.celebrating = false
+     this.awaitingRestart = false
+     this.player.stopCelebration()
+     this.setNotice('')
+
+     this.hunger = this.hungerMax
+     this.renderHunger()
+ 
     this.ownerGoal.reset()
+    this.berries.reset()
+
+    // Refresh dense forest so one cluster stays on the path to the new goal.
+    this.scene.remove(this.decor.group)
+    const denseTarget = this.ownerGoal.getYardPosition().clone().multiplyScalar(0.6)
+    this.decor = new Decor(this.terrain, this.physics, { denseTarget })
+    this.scene.add(this.decor.group)
+    void this.decor.ready().catch(() => {})
 
     const spawnY = this.terrain.getHeightAt(0, 0) + 6
     const oldPlayer = this.player
@@ -402,6 +503,14 @@ export class Game {
     if (!this.winAudio) return
     this.winAudio.currentTime = 0
     void this.winAudio.play()
+  }
+
+  private playEatBerrySound() {
+    if (!this.eatBerryAudio) return
+    // Clone so we can overlap if several berries are eaten.
+    const sfx = this.eatBerryAudio.cloneNode(true) as HTMLAudioElement
+    sfx.volume = this.eatBerryAudio.volume
+    void sfx.play().catch(() => {})
   }
 
   private tryPlayBackground = () => {

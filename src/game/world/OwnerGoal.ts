@@ -89,6 +89,10 @@ export class OwnerGoal {
     this.rebuildColliders()
   }
 
+  getYardPosition() {
+    return this.group.position.clone()
+  }
+
   private build() {
     const fenceMat = new MeshStandardMaterial({ color: 0x7c5a34, roughness: 0.9 })
     const fencePostGeo = new BoxGeometry(0.3, 1.3, 0.3)

@@ -36,6 +36,39 @@ body {
   pointer-events: none;
 }
 
+.hud-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.hud-help {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hud-hunger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.25);
+  min-width: 86px;
+  justify-content: center;
+}
+
+.hud-hunger-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+#hunger-value.critical {
+  color: #ff8aa6;
+}
+
 #notice {
   position: fixed;
   left: 50%;
@@ -88,6 +121,37 @@ body {
   transform-origin: 50% 85%;
 }
 
+#berry-compass-needle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  background: linear-gradient(180deg, #ff77b0 0%, rgba(255, 119, 176, 0.2) 100%);
+  border-radius: 2px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  transform-origin: 50% 85%;
+  opacity: 0;
+}
+
+#berry-compass-needle.active {
+  opacity: 0.95;
+}
+
+#berry-compass-needle.blinking {
+  animation: berryBlink 1.1s ease-in-out infinite;
+}
+
+@keyframes berryBlink {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 #owner-compass-tip {
   position: absolute;
   top: -6px;
@@ -98,6 +162,38 @@ body {
   border-right: 6px solid transparent;
   border-bottom: 10px solid #ffe07a;
   transform: translateX(-50%);
+}
+
+#berry-compass-tip {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid #ff77b0;
+  transform: translateX(-50%);
+}
+
+#berry-compass-label {
+  position: absolute;
+  left: 50%;
+  top: 70px;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+}
+
+#berry-compass-label.active {
+  opacity: 1;
 }
 
 #confirm {

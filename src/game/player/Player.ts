@@ -15,6 +15,9 @@ export type PlayerConfig = {
   maxSlopeClimbRadians: number
   slideSlopeRadians: number
   slideStrength: number
+  starvingSpeedMultiplier: number
+  coyoteTime: number
+  jumpBufferTime: number
 }
 
 export class Player {
@@ -26,6 +29,9 @@ export class Player {
   private grounded = false
   private groundNormal = new Vector3(0, 1, 0)
   private desiredVel = new Vector3()
+
+  private coyoteTimer = 0
+  private jumpBufferTimer = 0
 
   private mixer: AnimationMixer | null = null
   private clips: DogClipMap = {}
@@ -39,6 +45,7 @@ export class Player {
   private celebrationDuration = 0
 
   private readonly cfg: PlayerConfig
+  private starving = false
 
   dispose() {
     const { world } = this.physics
@@ -61,6 +68,9 @@ export class Player {
       maxSlopeClimbRadians: (40 * Math.PI) / 180,
       slideSlopeRadians: (48 * Math.PI) / 180,
       slideStrength: 12,
+      starvingSpeedMultiplier: 0.28,
+      coyoteTime: 0.12,
+      jumpBufferTime: 0.12,
       ...config,
     }
 
@@ -98,6 +108,19 @@ export class Player {
   get position() {
     const t = this.body.translation()
     return new Vector3(t.x, t.y, t.z)
+  }
+
+  getHorizontalSpeed() {
+    const v = this.body.linvel()
+    return Math.sqrt(v.x * v.x + v.z * v.z)
+  }
+
+  getConfiguredMaxSpeed() {
+    return this.cfg.maxSpeed
+  }
+
+  setStarving(starving: boolean) {
+    this.starving = starving
   }
 
   get yaw() {
@@ -165,6 +188,19 @@ export class Player {
     // Ground check.
     this.updateGroundInfo(cfg)
 
+    // Jump buffer + coyote time for reliability on rough terrain.
+    if (this.grounded) {
+      this.coyoteTimer = cfg.coyoteTime
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - dt)
+    }
+
+    if (state.jumpPressed) {
+      this.jumpBufferTimer = cfg.jumpBufferTime
+    } else {
+      this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt)
+    }
+
     // Movement direction relative to camera yaw.
     const move = allowMove ? new Vector3(state.right, 0, -state.forward) : new Vector3(0, 0, 0)
     if (move.lengthSq() > 1e-6) move.normalize()
@@ -172,7 +208,9 @@ export class Player {
     const yaw = cameraYaw
     move.applyAxisAngle(new Vector3(0, 1, 0), yaw)
 
-    const targetSpeed = state.runHeld ? cfg.maxSpeed * 0.55 : cfg.maxSpeed
+    let targetSpeed = state.runHeld ? cfg.maxSpeed * 0.55 : cfg.maxSpeed
+    if (this.starving) targetSpeed *= cfg.starvingSpeedMultiplier
+
     const desiredVel = new Vector3(move.x * targetSpeed, 0, move.z * targetSpeed)
 
     // Handle steep slopes: remove uphill component and add slide.
@@ -212,9 +250,14 @@ export class Player {
     vel.z = approach(vel.z, desiredVel.z, accel * dt)
 
     // Jump.
-    if (this.grounded && state.jumpPressed) {
+    const canJump = this.coyoteTimer > 0
+    const wantsJump = this.jumpBufferTimer > 0
+
+    if (canJump && wantsJump) {
       vel.y = cfg.jumpSpeed
       this.grounded = false
+      this.coyoteTimer = 0
+      this.jumpBufferTimer = 0
       this.jumpAnimTime = 0.45
       this.jumpWasRunning = !state.runHeld
     } else if (this.celebrating && this.grounded && this.celebrationHopTimer <= 0) {

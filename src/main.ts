@@ -8,10 +8,18 @@ function renderAppShell() {
   app.innerHTML = `
     <canvas id="game" tabindex="0"></canvas>
     <div id="hud">
-      <div><b>WASD / Стрелки</b> — бег</div>
-      <div><b>Shift</b> — ходьба</div>
-      <div><b>Пробел</b> — прыжок</div>
-      <div><b>Мышь</b> — смотреть (кликни по сцене)</div>
+      <div class="hud-row">
+        <div class="hud-help">
+          <div><b>WASD / Стрелки</b> — бег</div>
+          <div><b>Shift</b> — ходьба</div>
+          <div><b>Пробел</b> — прыжок</div>
+          <div><b>Мышь</b> — смотреть (кликни по сцене)</div>
+        </div>
+        <div id="hunger" class="hud-hunger" title="Голод">
+          <span class="hud-hunger-icon">🍓</span>
+          <span id="hunger-value">100%</span>
+        </div>
+      </div>
     </div>
     <div id="notice" class="hidden"></div>
     <div id="confirm" class="hidden">
@@ -32,11 +40,12 @@ function renderAppShell() {
     confirm: app.querySelector<HTMLDivElement>('#confirm')!,
     confirmYes: app.querySelector<HTMLButtonElement>('#confirm-yes')!,
     confirmNo: app.querySelector<HTMLButtonElement>('#confirm-no')!,
+    hungerValue: app.querySelector<HTMLSpanElement>('#hunger-value')!,
   }
 }
 
 async function main() {
-  const { root, canvas, status, notice, confirm, confirmYes, confirmNo } = renderAppShell()
+  const { root, canvas, status, notice, confirm, confirmYes, confirmNo, hungerValue } = renderAppShell()
 
   const game = new Game({
     root,
@@ -46,6 +55,7 @@ async function main() {
     confirmEl: confirm,
     confirmYes,
     confirmNo,
+    hungerEl: hungerValue,
   })
   await game.init()
   game.start()

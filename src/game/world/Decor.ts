@@ -1,62 +1,112 @@
-import {
-  Color,
-  CylinderGeometry,
-  Group,
-  InstancedMesh,
-  MeshStandardMaterial,
-  Object3D,
-  SphereGeometry,
-} from 'three'
+import { Box3, Group, InstancedMesh, Object3D, Vector3 } from 'three'
+
+import { loadDecorModel } from '../assets/loadDecor'
 
 import type { Physics } from '../physics/Physics'
 import type { Terrain } from './Terrain'
 
 export type DecorConfig = {
   treeCount: number
+  denseTreeCount: number
   rockCount: number
   seed: number
+  denseTarget?: Vector3
+}
+
+type MeshPart = {
+  mesh: Object3D
+  geometry: any
+  material: any
+}
+
+type MeshParts = {
+  meshes: MeshPart[]
+  bounds: Box3
+  size: Vector3
 }
 
 export class Decor {
   readonly group = new Group()
+
+  private readonly cfg: DecorConfig
+
+  private treeBaseOffsetY = 0
+  private treeHeight = 4.4
+  private treeScaleMultiplier = 5
+
+  private rockBaseOffsetY = 0
+  private rockHeight = 2.4
+  private rockRadiusBase = 1.2
+
+  private readyPromise: Promise<void>
 
   constructor(
     private readonly terrain: Terrain,
     private readonly physics: Physics,
     config?: Partial<DecorConfig>,
   ) {
-    const cfg: DecorConfig = {
+    this.cfg = {
       treeCount: 900,
+      denseTreeCount: 240,
       rockCount: 220,
       seed: 2026,
       ...config,
     }
 
-    this.addTrees(cfg)
-    this.addRocks(cfg)
+    this.readyPromise = this.init()
   }
 
-  private addTrees(cfg: DecorConfig) {
-    const trunkGeo = new CylinderGeometry(0.35, 0.5, 4.2, 12)
-    const trunkMat = new MeshStandardMaterial({ color: 0x5a3b20, roughness: 1 })
+  async ready() {
+    await this.readyPromise
+  }
 
-    const canopyGeo = new SphereGeometry(2.2, 16, 12)
-    const canopyMat = new MeshStandardMaterial({ color: 0x1f6b2a, roughness: 1 })
+  private async init() {
+    const [treeAsset, rockAsset] = await Promise.all([
+      loadDecorModel(`${import.meta.env.BASE_URL}assets/decor/Tree.glb`),
+      loadDecorModel(`${import.meta.env.BASE_URL}assets/decor/Rock.glb`),
+    ])
 
-    const trunks = new InstancedMesh(trunkGeo, trunkMat, cfg.treeCount)
-    const canopies = new InstancedMesh(canopyGeo, canopyMat, cfg.treeCount)
+    const treeParts = collectMeshParts(treeAsset.root)
+    const rockParts = collectMeshParts(rockAsset.root)
 
-    trunks.castShadow = true
-    trunks.receiveShadow = true
-    canopies.castShadow = true
+    this.treeBaseOffsetY = -treeParts.bounds.min.y
+    this.treeHeight = Math.max(0.01, treeParts.size.y)
 
+    this.rockBaseOffsetY = -rockParts.bounds.min.y
+    this.rockHeight = Math.max(0.01, rockParts.size.y)
+    this.rockRadiusBase = Math.max(rockParts.size.x, rockParts.size.y, rockParts.size.z) * 0.5
+
+    const treeMeshes = treeParts.meshes.map((part) => {
+      const mesh = new InstancedMesh(part.geometry, part.material, this.cfg.treeCount)
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      this.group.add(mesh)
+      return mesh
+    })
+
+    const rockMeshes = rockParts.meshes.map((part) => {
+      const mesh = new InstancedMesh(part.geometry, part.material, this.cfg.rockCount)
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      this.group.add(mesh)
+      return mesh
+    })
+
+    const baseTreeCount = this.placeTrees(treeMeshes)
+    this.placeDenseTrees(treeMeshes, baseTreeCount)
+    this.placeRocks(rockMeshes)
+  }
+
+  private placeTrees(meshes: InstancedMesh[]) {
+    const cfg = this.cfg
     const rand = mulberry32(cfg.seed)
+
     const dummy = new Object3D()
 
     let placed = 0
     let attempts = 0
 
-    while (placed < cfg.treeCount && attempts < cfg.treeCount * 20) {
+    while (placed < cfg.treeCount && attempts < cfg.treeCount * 25) {
       attempts++
 
       const x = (rand() - 0.5) * this.terrain.config.width
@@ -69,50 +119,128 @@ export class Decor {
       const slope = estimateSlopeRadians(this.terrain, x, z)
       if (slope > (55 * Math.PI) / 180) continue
 
-      const heightScale = 0.75 + rand() * 0.6
+      const heightScale = (0.75 + rand() * 0.6) * this.treeScaleMultiplier
       const yaw = rand() * Math.PI * 2
 
-      dummy.position.set(x, y + 2.1 * heightScale, z)
+      // Ground the model: compensate for GLB pivot so box.min.y touches terrain.
+      const groundedY = y + this.treeBaseOffsetY * heightScale
+
+      dummy.position.set(x, groundedY, z)
       dummy.rotation.set(0, yaw, 0)
       dummy.scale.setScalar(heightScale)
       dummy.updateMatrix()
-      trunks.setMatrixAt(placed, dummy.matrix)
 
-      dummy.position.set(x, y + 4.6 * heightScale, z)
-      dummy.scale.setScalar(heightScale)
-      dummy.updateMatrix()
-      canopies.setMatrixAt(placed, dummy.matrix)
+      for (const mesh of meshes) {
+        mesh.setMatrixAt(placed, dummy.matrix)
+      }
 
-      // Physics: cylinder around trunk.
-      const colliderDesc = this.physics.RAPIER.ColliderDesc.cylinder(2.2 * heightScale, 0.55)
-      colliderDesc.setTranslation(x, y + 2.2 * heightScale, z)
+      // Physics: approximate trunk with a cylinder.
+      const trunkHalfHeight = (this.treeHeight * heightScale) * 0.5
+      const colliderDesc = this.physics.RAPIER.ColliderDesc.cylinder(trunkHalfHeight, 0.55)
+      colliderDesc.setTranslation(x, y + trunkHalfHeight, z)
       colliderDesc.setFriction(1.0)
       this.physics.world.createCollider(colliderDesc)
 
       placed++
     }
 
-    trunks.count = placed
-    canopies.count = placed
+    for (const mesh of meshes) {
+      mesh.count = placed
+      mesh.instanceMatrix.needsUpdate = true
+    }
 
-    this.group.add(trunks, canopies)
+    return placed
   }
 
-  private addRocks(cfg: DecorConfig) {
-    const rockGeo = new SphereGeometry(1.6, 12, 10)
-    const rockMat = new MeshStandardMaterial({ color: new Color(0x707070), roughness: 0.9 })
+  private placeDenseTrees(meshes: InstancedMesh[], startIndex: number) {
+    const cfg = this.cfg
+    const rand = mulberry32(cfg.seed + 133)
 
-    const rocks = new InstancedMesh(rockGeo, rockMat, cfg.rockCount)
-    rocks.castShadow = true
-    rocks.receiveShadow = true
+    const dummy = new Object3D()
 
+    const halfW = this.terrain.config.width / 2
+    const halfD = this.terrain.config.depth / 2
+    const bandMin = 0.45
+    const bandMax = 0.6
+    const clusterCount = 2
+    const clusterRadius = 110
+
+    const clusterCenters: Vector3[] = []
+
+    const targetCenter = cfg.denseTarget
+    if (targetCenter) {
+      clusterCenters.push(new Vector3(targetCenter.x, 0, targetCenter.z))
+    }
+
+    for (let i = clusterCenters.length; i < clusterCount; i++) {
+      const signX = rand() > 0.5 ? 1 : -1
+      const signZ = rand() > 0.5 ? 1 : -1
+      const cx = signX * (bandMin + rand() * (bandMax - bandMin)) * halfW
+      const cz = signZ * (bandMin + rand() * (bandMax - bandMin)) * halfD
+      clusterCenters.push(new Vector3(cx, 0, cz))
+    }
+
+    let placed = 0
+    let attempts = 0
+
+    while (placed < cfg.denseTreeCount && attempts < cfg.denseTreeCount * 45) {
+      attempts++
+
+      const center = clusterCenters[Math.floor(rand() * clusterCenters.length)]
+      const angle = rand() * Math.PI * 2
+      const radius = Math.sqrt(rand()) * clusterRadius
+
+      const x = center.x + Math.cos(angle) * radius
+      const z = center.z + Math.sin(angle) * radius
+
+      // Avoid spawn area.
+      if (x * x + z * z < 45 * 45) continue
+
+      const y = this.terrain.getHeightAt(x, z)
+      const slope = estimateSlopeRadians(this.terrain, x, z)
+      if (slope > (35 * Math.PI) / 180) continue
+
+      const heightScale = (0.9 + rand() * 0.7) * this.treeScaleMultiplier
+      const yaw = rand() * Math.PI * 2
+
+      const groundedY = y + this.treeBaseOffsetY * heightScale
+
+      dummy.position.set(x, groundedY, z)
+      dummy.rotation.set(0, yaw, 0)
+      dummy.scale.setScalar(heightScale)
+      dummy.updateMatrix()
+
+      const index = startIndex + placed
+      for (const mesh of meshes) {
+        mesh.setMatrixAt(index, dummy.matrix)
+      }
+
+      const trunkHalfHeight = (this.treeHeight * heightScale) * 0.5
+      const colliderDesc = this.physics.RAPIER.ColliderDesc.cylinder(trunkHalfHeight, 0.65)
+      colliderDesc.setTranslation(x, y + trunkHalfHeight, z)
+      colliderDesc.setFriction(1.0)
+      this.physics.world.createCollider(colliderDesc)
+
+      placed++
+    }
+
+    const totalPlaced = startIndex + placed
+    for (const mesh of meshes) {
+      mesh.count = totalPlaced
+      mesh.instanceMatrix.needsUpdate = true
+    }
+  }
+
+  private placeRocks(meshes: InstancedMesh[]) {
+    const cfg = this.cfg
     const rand = mulberry32(cfg.seed + 99)
+
     const dummy = new Object3D()
 
     let placed = 0
     let attempts = 0
 
-    while (placed < cfg.rockCount && attempts < cfg.rockCount * 30) {
+    while (placed < cfg.rockCount && attempts < cfg.rockCount * 35) {
       attempts++
 
       const x = (rand() - 0.5) * this.terrain.config.width
@@ -126,23 +254,66 @@ export class Decor {
       const s = 0.6 + rand() * 1.2
       const yaw = rand() * Math.PI * 2
 
-      dummy.position.set(x, y + 0.8 * s, z)
+      const groundedY = y + this.rockBaseOffsetY * s
+
+      dummy.position.set(x, groundedY, z)
       dummy.rotation.set(0, yaw, 0)
       dummy.scale.set(s * 1.2, s * 0.9, s * 1.1)
       dummy.updateMatrix()
-      rocks.setMatrixAt(placed, dummy.matrix)
 
-      const colliderDesc = this.physics.RAPIER.ColliderDesc.ball(1.7 * s)
-      colliderDesc.setTranslation(x, y + 0.95 * s, z)
+      for (const mesh of meshes) {
+        mesh.setMatrixAt(placed, dummy.matrix)
+      }
+
+      const radius = Math.max(0.2, this.rockRadiusBase * s)
+      const centerY = y + (this.rockHeight * s) * 0.5
+      const colliderDesc = this.physics.RAPIER.ColliderDesc.ball(radius)
+      colliderDesc.setTranslation(x, centerY, z)
       colliderDesc.setFriction(1.0)
       this.physics.world.createCollider(colliderDesc)
 
       placed++
     }
 
-    rocks.count = placed
-    this.group.add(rocks)
+    for (const mesh of meshes) {
+      mesh.count = placed
+      mesh.instanceMatrix.needsUpdate = true
+    }
   }
+}
+
+function collectMeshParts(root: Group): MeshParts {
+  root.updateMatrixWorld(true)
+
+  const meshes: MeshPart[] = []
+  const bounds = new Box3()
+  let hasBounds = false
+
+  root.traverse((obj) => {
+    const m = obj as any
+    if (!m.isMesh || !m.geometry || !m.material) return
+
+    meshes.push({ mesh: m as Object3D, geometry: m.geometry, material: m.material })
+
+    const box = new Box3().setFromObject(m)
+    if (!hasBounds) {
+      bounds.copy(box)
+      hasBounds = true
+    } else {
+      bounds.union(box)
+    }
+  })
+
+  if (!meshes.length) {
+    throw new Error('Decor glb contains no meshes')
+  }
+
+  if (!hasBounds) {
+    bounds.set(new Vector3(0, 0, 0), new Vector3(0, 0, 0))
+  }
+
+  const size = bounds.getSize(new Vector3())
+  return { meshes, bounds, size }
 }
 
 function estimateSlopeRadians(terrain: Terrain, x: number, z: number) {
