@@ -224,6 +224,7 @@ export class Game {
         run: '/assets/dog/Run.glb',
         walk: '/assets/dog/Walk.glb',
         jump: '/assets/dog/Jump.glb',
+        gallopJump: '/assets/dog/GallopJump.glb',
       })
       this.player.setModel(dog.root, dog.clips)
       this.setStatus('')

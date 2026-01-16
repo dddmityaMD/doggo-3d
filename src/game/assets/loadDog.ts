@@ -11,6 +11,7 @@ export type DogClipFiles = {
   run?: string
   walk?: string
   jump?: string
+  gallopJump?: string
 }
 
 export async function loadDogSet(modelUrl: string, clipUrls: DogClipFiles): Promise<DogAsset> {
@@ -53,6 +54,7 @@ export type DogClipMap = {
   walk?: AnimationClip
   run?: AnimationClip
   jump?: AnimationClip
+  gallopJump?: AnimationClip
 }
 
 export function pickDogClips(clips: AnimationClip[]): DogClipMap {
@@ -71,6 +73,10 @@ export function pickDogClips(clips: AnimationClip[]): DogClipMap {
     clips[2] ??
     walk
   const jump = byName(/^jump$/i) ?? byName(/jump|hop/i) ?? clips[3]
+  const gallopJump =
+    byName(/gallop[_\s-]*jump/i) ??
+    byName(/run[_\s-]*jump/i) ??
+    byName(/jump[_\s-]*run/i)
 
-  return { idle, walk, run, jump }
+  return { idle, walk, run, jump, gallopJump }
 }

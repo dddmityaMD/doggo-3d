@@ -29,9 +29,10 @@ export class Player {
 
   private mixer: AnimationMixer | null = null
   private clips: DogClipMap = {}
-  private activeActionName: 'idle' | 'walk' | 'run' | 'jump' | null = null
+  private activeActionName: 'idle' | 'walk' | 'run' | 'jump' | 'gallopJump' | null = null
 
-  private lastMoveSpeed = 0
+  private jumpAnimTime = 0
+  private jumpWasRunning = false
 
   private readonly cfg: PlayerConfig
 
@@ -45,7 +46,7 @@ export class Player {
       radius: 0.45,
       halfHeight: 0.55,
       maxSpeed: 8.5,
-      acceleration: 26,
+      acceleration: 36,
       jumpSpeed: 7.2,
       maxSlopeClimbRadians: (40 * Math.PI) / 180,
       slideSlopeRadians: (48 * Math.PI) / 180,
@@ -194,6 +195,8 @@ export class Player {
     if (this.grounded && state.jumpPressed) {
       vel.y = cfg.jumpSpeed
       this.grounded = false
+      this.jumpAnimTime = 0.45
+      this.jumpWasRunning = state.runHeld
     }
 
     this.body.setLinvel({ x: vel.x, y: vel.y, z: vel.z }, true)
@@ -214,8 +217,13 @@ export class Player {
     const runActive = this.input.getState().runHeld
     this.updateAnimation(dt, moveSpeed, runActive)
 
-    this.lastMoveSpeed = moveSpeed
+    if (this.jumpAnimTime > 0) {
+      this.jumpAnimTime = Math.max(0, this.jumpAnimTime - dt)
+    }
 
+    if (this.jumpAnimTime === 0) {
+      this.jumpWasRunning = false
+    }
   }
 
   private updateGroundInfo(cfg: PlayerConfig) {
@@ -242,14 +250,20 @@ export class Player {
   private updateAnimation(dt: number, speedXZ: number, runActive: boolean) {
     if (!this.mixer || !this.clips.idle) return
 
-    let next: 'idle' | 'walk' | 'run' | 'jump'
-    if (!this.grounded) next = 'jump'
-    else if (speedXZ > 0.25) next = runActive ? 'run' : 'walk'
-    else next = 'idle'
-
-    if (next === 'run' && this.lastMoveSpeed < 0.25 && speedXZ < 0.45) {
-      next = 'walk'
+    let next: 'idle' | 'walk' | 'run' | 'jump' | 'gallopJump'
+    if (this.jumpAnimTime > 0 && !this.grounded) {
+      if (this.jumpWasRunning && this.clips.gallopJump) {
+        next = 'gallopJump'
+      } else {
+        next = 'jump'
+      }
+    } else if (speedXZ > 0.25) {
+      next = runActive ? 'run' : 'walk'
+    } else {
+      next = 'idle'
     }
+
+
 
     if (this.activeActionName !== next) {
       const action = (clipName: keyof DogClipMap) => {
@@ -259,7 +273,7 @@ export class Player {
 
       const nextAction = action(next)
       if (nextAction) {
-        if (next === 'jump') {
+        if (next === 'jump' || next === 'gallopJump') {
           nextAction.setLoop(LoopOnce, 1)
           nextAction.clampWhenFinished = true
           nextAction.reset()
