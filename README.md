@@ -33,6 +33,18 @@ npm run build
 npm run preview
 ```
 
+## Controls
+
+- Move: WASD / Arrow keys
+- Run: Shift
+- Jump: Space
+
+## Gameplay
+
+- Explore the yard, follow the compass needle to the owner.
+- Hunger drains while moving; collect berries to restore it.
+- Low hunger shows the nearest berry on the compass.
+
 ## Assets
 
 - 3D models live in `public/assets`
